@@ -1,0 +1,17 @@
+[package]
+name = "egui_widgets"
+version = "0.1.0"
+edition = "2024"
+description = "Reusable egui widgets"
+repository = "https://github.com/vojtech-homola/egui-widgets"
+license = "MIT"
+readme = "README.md"
+
+[dependencies]
+egui = { version = "0.36" }
+
+[dev-dependencies]
+egui_kittest = "0.36"
+
+[workspace]
+members = [".", "example"]

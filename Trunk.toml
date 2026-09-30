@@ -1,0 +1,11 @@
+[build]
+target = "./example/index.html"
+dist = "./example/web/"
+filehash = false
+
+[serve]
+port = 8190
+
+[watch]
+watch = ["./example/", "./src/"]
+ignore = ["./example/web/"]
