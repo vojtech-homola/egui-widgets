@@ -14,7 +14,7 @@ fn main() {
     eframe::run_native(
         "egui_widgets demo",
         native_options,
-        Box::new(|cc| Ok(DemoApp::new(cc))),
+        Box::new(|cc| Ok(Box::new(DemoApp::new(cc)))),
     )
     .unwrap();
 }
@@ -40,7 +40,11 @@ fn main() {
             .expect("the_canvas_id was not a HtmlCanvasElement");
 
         eframe::WebRunner::new()
-            .start(canvas, web_options, Box::new(|cc| Ok(DemoApp::new(cc))))
+            .start(
+                canvas,
+                web_options,
+                Box::new(|cc| Ok(Box::new(DemoApp::new(cc)))),
+            )
             .await
             .expect("Failed to start eframe WebRunner");
     });

@@ -54,13 +54,43 @@ fn replace_text(harness: &mut Harness<'_, impl Sized>, text: &str) {
     harness.run();
 }
 
-fn wheel(harness: &mut Harness<'_, impl Sized>, delta_y: f32) {
-    harness.event(Event::MouseWheel {
-        unit: MouseWheelUnit::Line,
-        delta: vec2(0., delta_y),
+fn wheel_event(unit: MouseWheelUnit, delta: egui::Vec2, modifiers: Modifiers) -> Event {
+    Event::MouseWheel {
+        unit,
+        delta,
         phase: TouchPhase::Move,
-        modifiers: Modifiers::NONE,
-    });
+        modifiers,
+    }
+}
+
+fn wheel(harness: &mut Harness<'_, impl Sized>, delta_y: f32) {
+    harness.event(wheel_event(
+        MouseWheelUnit::Line,
+        vec2(0., delta_y),
+        Modifiers::NONE,
+    ));
+    harness.run();
+}
+
+fn key_event(key: Key, modifiers: Modifiers) -> Event {
+    Event::Key {
+        key,
+        physical_key: None,
+        pressed: true,
+        repeat: false,
+        modifiers,
+    }
+}
+
+/// Send `events` together in one frame. (`Harness::event` gives each event a frame of
+/// its own.)
+fn one_frame(harness: &mut Harness<'_, impl Sized>, events: impl IntoIterator<Item = Event>) {
+    harness.input_mut().events.extend(events);
+    harness.run();
+}
+
+fn type_text(harness: &mut Harness<'_, impl Sized>, text: &str) {
+    harness.event(Event::Text(text.to_owned()));
     harness.run();
 }
 
@@ -621,4 +651,296 @@ fn float_range_is_respected() {
 
     wheel(&mut harness, 1.0);
     assert_eq!(*harness.state(), 1.0);
+}
+
+// Selection ------------------------------------------------------------------
+#[test]
+fn focus_selects_text_so_typing_replaces_it() {
+    let mut harness = int_harness(5, |w| w);
+    focus(&mut harness, "5");
+
+    type_text(&mut harness, "7");
+    input(&harness, "7");
+    press(&mut harness, Key::Enter);
+    assert_eq!(*harness.state(), 7);
+}
+
+#[test]
+fn tab_focus_selects_text() {
+    let mut harness = two_boxes(|w| w);
+    focus(&mut harness, "5");
+
+    press(&mut harness, Key::Tab);
+    assert!(input(&harness, "10").is_focused());
+    type_text(&mut harness, "3");
+    press(&mut harness, Key::Enter);
+    assert_eq!(*harness.state(), (5, 3));
+}
+
+#[test]
+fn step_selects_text() {
+    let mut harness = int_harness(5, |w| w);
+    focus(&mut harness, "5");
+
+    press(&mut harness, Key::ArrowUp);
+    type_text(&mut harness, "9");
+    press(&mut harness, Key::Enter);
+    assert_eq!(*harness.state(), 9);
+}
+
+// Input in one frame -----------------------------------------------------------
+#[test]
+fn keys_in_one_frame_are_applied_in_order() {
+    let mut harness = int_harness(0, |w| w.default_single_step(4));
+    focus(&mut harness, "0");
+
+    let up = || key_event(Key::ArrowUp, Modifiers::NONE);
+    one_frame(&mut harness, [up(), up(), up()]);
+    assert_eq!(*harness.state(), 12);
+
+    one_frame(
+        &mut harness,
+        [up(), key_event(Key::ArrowDown, Modifiers::NONE)],
+    );
+    assert_eq!(*harness.state(), 12);
+
+    // the step is halved between the two steps
+    one_frame(
+        &mut harness,
+        [up(), key_event(Key::Q, Modifiers::NONE), up()],
+    );
+    assert_eq!(*harness.state(), 18);
+}
+
+#[test]
+fn wheel_events_in_one_frame_are_all_applied() {
+    let mut harness = int_harness(5, |w| w);
+    focus(&mut harness, "5");
+
+    let notch = || wheel_event(MouseWheelUnit::Line, vec2(0., 1.), Modifiers::NONE);
+    one_frame(&mut harness, [notch(), notch(), notch()]);
+    assert_eq!(*harness.state(), 8);
+}
+
+// Modifiers and letters --------------------------------------------------------
+#[test]
+fn shift_arrow_does_not_step() {
+    let mut harness = int_harness(5, |w| w);
+    focus(&mut harness, "5");
+
+    one_frame(&mut harness, [key_event(Key::ArrowUp, Modifiers::SHIFT)]);
+    assert_eq!(*harness.state(), 5);
+}
+
+#[test]
+fn shortcut_letters_are_never_typed() {
+    let mut harness = int_harness(5, |w| w.default_single_step(4));
+    focus(&mut harness, "5");
+
+    // Caps Lock: the Q key without modifiers, typing an uppercase "Q"
+    one_frame(
+        &mut harness,
+        [
+            key_event(Key::Q, Modifiers::NONE),
+            Event::Text("Q".to_owned()),
+        ],
+    );
+    // a letter arriving in a frame of its own
+    type_text(&mut harness, "r");
+    input(&harness, "5");
+
+    // Q halved the step, the lone "r" didn't reset it
+    press(&mut harness, Key::ArrowUp);
+    assert_eq!(*harness.state(), 7);
+}
+
+// Wheel --------------------------------------------------------------------
+#[test]
+fn touchpad_steps_at_a_steady_pace() {
+    let mut harness = int_harness(5, |w| w);
+    focus(&mut harness, "5");
+
+    // a short swipe: 20 movements of 2 points
+    for _ in 0..20 {
+        harness.event(wheel_event(
+            MouseWheelUnit::Point,
+            vec2(0., 2.),
+            Modifiers::NONE,
+        ));
+    }
+    harness.run();
+    assert_eq!(*harness.state(), 6);
+}
+
+#[test]
+fn float_wheel_steps_by_whole_steps() {
+    let mut harness = float_harness(1.0, |w| w.default_single_step(0.5));
+    focus(&mut harness, "1.00");
+
+    // three half notches: one whole step, the rest waits for more movement
+    for _ in 0..3 {
+        harness.event(wheel_event(
+            MouseWheelUnit::Line,
+            vec2(0., 0.5),
+            Modifiers::NONE,
+        ));
+    }
+    harness.run();
+    assert_eq!(*harness.state(), 1.5);
+}
+
+#[test]
+fn horizontal_scrolling_and_zoom_keep_typed_text() {
+    let mut harness = int_harness(5, |w| w);
+    focus(&mut harness, "5");
+    replace_text(&mut harness, "42");
+
+    for event in [
+        wheel_event(MouseWheelUnit::Line, vec2(1., 0.), Modifiers::NONE),
+        wheel_event(MouseWheelUnit::Line, vec2(0., 1.), Modifiers::SHIFT),
+        wheel_event(MouseWheelUnit::Line, vec2(0., 1.), Modifiers::COMMAND),
+    ] {
+        harness.event(event);
+        harness.run();
+        assert_eq!(*harness.state(), 5);
+        assert!(input(&harness, "42").is_focused());
+    }
+}
+
+// Range ----------------------------------------------------------------------
+#[test]
+fn reversed_range_is_accepted() {
+    let mut harness = int_harness(9, |w| w.range([10, 0]));
+    focus(&mut harness, "9");
+
+    press(&mut harness, Key::ArrowUp);
+    press(&mut harness, Key::ArrowUp);
+    assert_eq!(*harness.state(), 10);
+}
+
+#[test]
+fn deferred_step_is_clamped_to_current_range() {
+    let mut harness = Harness::new_ui_state(
+        |ui, (value, max): &mut (i32, i32)| {
+            ui.add(WheelBox::new(value).always_update(false).range([0, *max]));
+        },
+        (5, 10),
+    );
+    harness.run();
+    focus(&mut harness, "5");
+
+    press(&mut harness, Key::ArrowUp);
+    harness.state_mut().1 = 4;
+    harness.run();
+    press(&mut harness, Key::Enter);
+    assert_eq!(*harness.state(), (4, 4));
+}
+
+#[test]
+fn value_from_outside_the_range_is_kept_until_changed() {
+    let mut harness = int_harness(50, |w| w.range([0, 10]));
+    focus(&mut harness, "50");
+
+    press(&mut harness, Key::Enter);
+    assert_eq!(*harness.state(), 50);
+
+    focus(&mut harness, "50");
+    press(&mut harness, Key::ArrowUp);
+    assert_eq!(*harness.state(), 10);
+}
+
+// Ids, focus and options -----------------------------------------------------
+#[test]
+fn id_salt_keeps_edit_when_widgets_appear_above() {
+    let mut harness = Harness::new_ui_state(
+        |ui, (show_button, value): &mut (bool, i32)| {
+            if *show_button {
+                let _ = ui.button("new");
+            }
+            ui.add(WheelBox::new(value).id_salt("value"));
+        },
+        (false, 5),
+    );
+    harness.run();
+    focus(&mut harness, "5");
+    replace_text(&mut harness, "42");
+
+    harness.state_mut().0 = true;
+    harness.run();
+    assert!(input(&harness, "42").is_focused());
+
+    press(&mut harness, Key::Enter);
+    assert_eq!(harness.state().1, 42);
+}
+
+#[test]
+fn disabled_box_is_not_editable() {
+    let mut harness = Harness::new_ui_state(
+        |ui, value: &mut i32| {
+            ui.add_enabled(false, WheelBox::new(value));
+        },
+        5,
+    );
+    harness.run();
+
+    input(&harness, "5").click();
+    harness.run();
+    assert!(!input(&harness, "5").is_focused());
+    press(&mut harness, Key::ArrowUp);
+    assert_eq!(*harness.state(), 5);
+}
+
+#[test]
+fn changing_decimals_refreshes_focused_text() {
+    let mut harness = Harness::new_ui_state(
+        |ui, (value, decimals): &mut (f64, u32)| {
+            ui.add(WheelBox::new(value).decimals(*decimals));
+        },
+        (1.23456, 2),
+    );
+    harness.run();
+    focus(&mut harness, "1.23");
+
+    harness.state_mut().1 = 4;
+    harness.run();
+    assert!(input(&harness, "1.2346").is_focused());
+}
+
+// Float stepping ---------------------------------------------------------------
+#[test]
+fn float_steps_do_not_drift() {
+    let mut harness = float_harness(0.5, |w| w.range([0.0, 1.0]).default_single_step(0.1));
+    focus(&mut harness, "0.50");
+
+    for _ in 0..4 {
+        press(&mut harness, Key::ArrowUp);
+    }
+    assert_eq!(*harness.state(), 0.9);
+
+    for _ in 0..9 {
+        press(&mut harness, Key::ArrowDown);
+    }
+    assert_eq!(*harness.state(), 0.0);
+    input(&harness, "0.00");
+}
+
+#[test]
+fn f32_steps_and_typing() {
+    let mut harness = Harness::new_ui_state(
+        |ui, value: &mut f32| {
+            ui.add(WheelBox::new(value).decimals(1));
+        },
+        1.0,
+    );
+    harness.run();
+    focus(&mut harness, "1.0");
+
+    press(&mut harness, Key::ArrowUp);
+    press(&mut harness, Key::Q);
+    press(&mut harness, Key::ArrowDown);
+    assert_eq!(*harness.state(), 1.5);
+
+    replace_text(&mut harness, "0,25");
+    press(&mut harness, Key::Enter);
+    assert_eq!(*harness.state(), 0.25);
 }

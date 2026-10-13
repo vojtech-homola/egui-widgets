@@ -4,13 +4,19 @@ Reusable widgets for [egui](https://github.com/emilk/egui).
 
 ## Widgets
 
-- `WheelBox` – numeric input box for integers (`i8`–`i64`, `u8`–`u64`) and floats (`f32`, `f64`).
-  Click to focus, then:
-  - `↑` / `↓` or the mouse wheel steps the value,
+- `WheelBox` – numeric input box for all primitive integers (`i8`–`i128`, `u8`–`u128`,
+  `isize`, `usize`) and floats (`f32`, `f64`).
+  Click (or Tab) to focus, then:
+  - `↑` / `↓` or the mouse wheel steps the value (one step per wheel notch; touchpads step
+    at a steady pace),
   - `Q` / `W` halves / doubles the step, `R` resets it,
   - typing a number and pressing `Enter` (or moving the focus away) commits it, `Esc` discards it.
 
-  `decimals` only limits what is shown, the value keeps its full precision.
+  The text is selected on focus and after each step, so typing replaces it. `Q`, `W` and `R`
+  are shortcuts only and are never typed.
+
+  `decimals` only limits what is shown, the value keeps its full precision. Stepping floats
+  doesn't accumulate rounding errors: `0.5` stepped by `0.1` gives exactly `0.6`.
 
   ```rust
   ui.add(WheelBox::new(&mut count).range([0, 100]).prefix("n: "));
@@ -18,10 +24,16 @@ Reusable widgets for [egui](https://github.com/emilk/egui).
   ui.add(WheelBox::new(&mut exposure).decimals(2).suffix(RichText::new("ms").weak()));
   ```
 
+  `range` may be given in either order. Typed and stepped values are clamped to it, a value
+  set by the application is shown as it is until the user changes it.
+
   `prefix` / `suffix` take egui [atoms](https://docs.rs/egui/latest/egui/struct.Atom.html)
   (text, `RichText`, images, or tuples of them) and stay visible while editing.
   If the box is too narrow, the suffix is hidden first, then the prefix, and only then is the
   value truncated.
+
+  Like other egui widgets, the box gets its id from its position in the `Ui`. If widgets
+  before it come and go while it's being edited, give it a stable id with `.id_salt(...)`.
 
 ## Example
 
@@ -46,7 +58,12 @@ trunk serve   # http://127.0.0.1:8190
 cargo test
 ```
 
-- Unit tests for the pure value logic (parsing, stepping, clamping) are next to the code in `src/`.
+- Unit tests for the pure value logic (parsing, stepping, clamping, wheel handling) are next
+  to the code in `src/`.
 - Interaction tests in `tests/` drive the widgets headlessly with
   [`egui_kittest`](https://crates.io/crates/egui_kittest). The widgets are exposed to AccessKit
   as text inputs whose value is the displayed number, so tests can find them by value.
+
+CI runs Clippy and the tests on Linux, Windows and macOS, and checks formatting, the docs,
+the minimum supported Rust version (1.95) and a WebAssembly build of the demo, see
+[`.github/workflows/ci.yml`](.github/workflows/ci.yml).

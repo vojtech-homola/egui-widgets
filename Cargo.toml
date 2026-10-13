@@ -2,13 +2,17 @@
 name = "egui_widgets"
 version = "0.1.0"
 edition = "2024"
+rust-version = "1.95"
 description = "Reusable egui widgets"
 repository = "https://github.com/vojtech-homola/egui-widgets"
 license = "MIT"
 readme = "README.md"
+keywords = ["egui", "gui", "widget", "spinbox", "numeric"]
+categories = ["gui"]
+include = ["/src", "/tests", "/LICENSE", "/README.md"]
 
 [dependencies]
-egui = { version = "0.36" }
+egui = { version = "0.36", default-features = false }
 
 [dev-dependencies]
 egui_kittest = "0.36"
