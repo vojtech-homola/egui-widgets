@@ -8,7 +8,9 @@ Reusable widgets for [egui](https://github.com/emilk/egui).
   Click to focus, then:
   - `↑` / `↓` or the mouse wheel steps the value,
   - `Q` / `W` halves / doubles the step, `R` resets it,
-  - typing a number and pressing `Enter` commits it.
+  - typing a number and pressing `Enter` (or moving the focus away) commits it, `Esc` discards it.
+
+  `decimals` only limits what is shown, the value keeps its full precision.
 
   ```rust
   ui.add(WheelBox::new(&mut count).range([0, 100]).prefix("n: "));
@@ -35,7 +37,7 @@ Web (requires [Trunk](https://trunkrs.dev) and the `wasm32-unknown-unknown` targ
 
 ```sh
 rustup target add wasm32-unknown-unknown
-trunk serve   # http://127.0.0.1:8090
+trunk serve   # http://127.0.0.1:8190
 ```
 
 ## Testing

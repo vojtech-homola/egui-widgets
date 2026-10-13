@@ -1,7 +1,7 @@
 use egui::{
     Align2, Atom, AtomExt as _, AtomLayout, Atoms, Color32, CursorIcon, Event, FontSelection,
-    Frame, Id, IntoAtoms, Margin, Response, RichText, Sense, TextWrapMode, Ui, Vec2, Widget,
-    WidgetInfo, text_edit, vec2,
+    Frame, Id, IntoAtoms, Key, Margin, Response, RichText, Sense, TextWrapMode, Ui, Vec2, Widget,
+    WidgetInfo, response::Flags, text_edit, vec2,
 };
 
 /// Inner margin shared by the focused [`text_edit::TextEdit`] and the unfocused layout,
@@ -59,26 +59,87 @@ fn wheel_value<T: WheelBoxValue>(value: T, step: T, wheel: f32, range: Option<[T
     clamp_value(value.wheel(step, wheel), range)
 }
 
+/// `==` that also treats NaN as equal to itself, so a NaN set from outside is not
+/// taken for a new change on every frame.
+#[allow(clippy::eq_op)]
+fn same<T: PartialEq>(a: T, b: T) -> bool {
+    a == b || (a != a && b != b)
+}
+
 // State ----------------------------------------------------------------------
 #[derive(Clone)]
 struct WheelBoxState<T> {
+    /// The bound value as last seen or written, to detect changes from outside.
+    value: T,
+    /// The value being edited. Ahead of `value` after stepping with
+    /// [`WheelBox::always_update`] off.
     state_value: T,
     string: String,
+    /// `string` was typed into since it was last set from `state_value`.
+    edited: bool,
+    /// The pass in which the widget was last shown focused.
+    edit_pass: Option<u64>,
     single_step: T,
 }
 
 impl<T: WheelBoxValue> WheelBoxState<T> {
     fn new(value: T, single_step: T, decimals: u32) -> Self {
         Self {
+            value,
             state_value: value,
             string: value.format(decimals),
+            edited: false,
+            edit_pass: None,
             single_step,
         }
     }
 
+    /// Set the value being edited and replace the text with it.
     fn set_value(&mut self, value: T, decimals: u32) {
         self.state_value = value;
         self.string = value.format(decimals);
+        self.edited = false;
+    }
+
+    /// Drop any pending edit and show the bound `value`.
+    fn reset(&mut self, value: T, decimals: u32) {
+        self.value = value;
+        self.set_value(value, decimals);
+    }
+
+    /// Follow a change of the bound value from outside. It replaces the value being
+    /// edited, but not the text being typed.
+    fn sync(&mut self, value: T, decimals: u32) {
+        self.value = value;
+        self.state_value = value;
+        if !self.edited {
+            self.string = value.format(decimals);
+        }
+    }
+
+    /// The typed number if the text was edited, otherwise the value being edited
+    /// at full precision. `None` if the typed text is not a number.
+    fn edited_value(&self, range: Option<[T; 2]>) -> Option<T> {
+        if self.edited {
+            parse_value(&self.string, range)
+        } else {
+            Some(self.state_value)
+        }
+    }
+
+    /// Finish editing and write the edited value to `value`. Invalid text is dropped.
+    /// Returns whether `value` changed.
+    fn commit(&mut self, value: &mut T, range: Option<[T; 2]>, decimals: u32) -> bool {
+        let changed = match self.edited_value(range) {
+            Some(v) if !same(v, *value) => {
+                *value = v;
+                true
+            }
+            _ => false,
+        };
+        self.reset(*value, decimals);
+        self.edit_pass = None;
+        changed
     }
 }
 
@@ -112,7 +173,11 @@ impl WheelsBoxKeys {
 ///
 /// Click to focus, then step the value with the arrow keys or the mouse wheel,
 /// change the step with Q (halve), W (double) and R (reset), or type a number
-/// and press Enter.
+/// and press Enter. Typed text is also committed when the box loses focus, and
+/// discarded on Escape.
+///
+/// The value is kept at full precision, [`WheelBox::decimals`] only limits what is
+/// shown. [`Response::changed`] is set only when the value changed.
 ///
 /// ```
 /// # egui::__run_test_ui(|ui| {
@@ -191,6 +256,8 @@ impl<'a, T> WheelBox<'a, T> {
         self
     }
 
+    /// Write stepped values right away (default). If off, the value is written when
+    /// editing ends, like typed text.
     pub fn always_update(mut self, always_update: bool) -> Self {
         self.always_update = always_update;
         self
@@ -234,13 +301,17 @@ where
         let has_focus = ui.memory(|m| m.has_focus(id));
 
         let default_single_step = default_single_step.unwrap_or(T::one());
-        let mut state = ui.data(|m| m.get_temp(id)).unwrap_or(WheelBoxState::new(
-            *value,
-            default_single_step,
-            decimals,
-        ));
+        let mut state = ui
+            .data(|m| m.get_temp(id))
+            .unwrap_or_else(|| WheelBoxState::new(*value, default_single_step, decimals));
 
         let text_color = text_color.unwrap_or(ui.visuals().widgets.active.text_color());
+
+        // Changed from outside, e.g. by the application or another widget showing
+        // the same value.
+        if !same(state.value, *value) {
+            state.sync(*value, decimals);
+        }
 
         // is focused -----------------------------------------------------
         if has_focus {
@@ -265,13 +336,14 @@ where
                 .id(text_id);
 
             let mut response = tex_edit.ui(ui);
+            state.edited |= response.changed();
+            // `changed()` reports changes of the value, not of the text being typed.
+            response.flags.remove(Flags::CHANGED);
 
             if response.lost_focus() {
-                if let Some(v) = parse_value(&state.string, range) {
-                    *value = v;
+                if state.commit(value, range, decimals) {
                     response.mark_changed();
                 }
-                state.set_value(*value, decimals);
 
                 ui.data_mut(|m| {
                     m.insert_temp(response.id, state);
@@ -281,6 +353,7 @@ where
 
                 return response;
             }
+            state.edit_pass = Some(ui.ctx().cumulative_pass_nr());
 
             let single_step = if let Some(single_step) = single_step {
                 *single_step = keys.update_step(*single_step, default_single_step);
@@ -290,19 +363,21 @@ where
                 state.single_step
             };
 
+            // Step from the typed number, if there is a valid one.
+            let start = state.edited_value(range).unwrap_or(state.state_value);
             let new_value = if keys.up || keys.down {
-                Some(step_value(state.state_value, single_step, keys.up, range))
+                Some(step_value(start, single_step, keys.up, range))
             } else if response.hovered() {
-                check_wheel(ui)
-                    .map(|wheel| wheel_value(state.state_value, single_step, wheel, range))
+                check_wheel(ui).map(|wheel| wheel_value(start, single_step, wheel, range))
             } else {
                 None
             };
 
             if let Some(v) = new_value {
                 state.set_value(v, decimals);
-                if always_update {
+                if always_update && !same(v, *value) {
                     *value = v;
+                    state.value = v;
                     response.mark_changed();
                 }
             }
@@ -315,17 +390,36 @@ where
 
         // is not focused --------------------------------------------------
         } else {
-            // Re-sync when the value changed from outside, or when text typed before
-            // losing focus (e.g. to another widget) was not committed.
+            let mut save_state = false;
+            let mut changed = false;
+
+            // The focus was taken before the text field could report losing it, e.g. by
+            // a widget shown above this one. Commit as on Enter, unless it was Escape,
+            // or the widget was hidden since it was focused.
+            if let Some(pass) = state.edit_pass {
+                let cancel = ui.input(|i| i.key_pressed(Key::Escape))
+                    || ui.ctx().cumulative_pass_nr() > pass + 1;
+                if cancel {
+                    state.edit_pass = None;
+                } else {
+                    changed = state.commit(value, range, decimals);
+                }
+                text_edit::TextEditState::default().store(ui.ctx(), id);
+                save_state = true;
+            }
+
+            // Drop edits that were not committed.
             let text = value.format(decimals);
-            let save_state = value != &state.state_value || state.string != text;
-            if save_state {
-                state.state_value = *value;
-                state.string = text.clone();
+            if !same(state.state_value, *value) || state.string != text || state.edited {
+                state.reset(*value, decimals);
+                save_state = true;
             }
 
             let affixes = fit_affixes(ui, width, prefix, &text, suffix);
-            let response = show_unfocused(ui, id, width, affixes, text, text_color);
+            let mut response = show_unfocused(ui, id, width, affixes, text, text_color);
+            if changed {
+                response.mark_changed();
+            }
 
             if save_state {
                 ui.data_mut(|m| {
@@ -673,6 +767,15 @@ mod tests {
         assert_eq!(fit(|p, v, _| p + v - 1.), (false, false));
         // the value itself doesn't fit and will be truncated
         assert_eq!(fit(|_, v, _| v / 2.), (false, false));
+    }
+
+    #[test]
+    fn same_treats_nan_as_equal() {
+        assert!(same(1.0, 1.0));
+        assert!(same(f64::NAN, f64::NAN));
+        assert!(!same(f64::NAN, 1.0));
+        assert!(!same(1.0, 2.0));
+        assert!(same(3, 3));
     }
 
     // Step ------------------------------------------------------------------

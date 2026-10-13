@@ -231,6 +231,225 @@ fn external_value_change_is_displayed() {
     input(&harness, "7");
 }
 
+#[test]
+fn typing_then_arrow_steps_typed_value() {
+    let mut harness = int_harness(5, |w| w);
+    focus(&mut harness, "5");
+
+    replace_text(&mut harness, "42");
+    press(&mut harness, Key::ArrowUp);
+    assert_eq!(*harness.state(), 43);
+    input(&harness, "43");
+}
+
+#[test]
+fn typing_then_wheel_steps_typed_value() {
+    let mut harness = int_harness(5, |w| w);
+    focus(&mut harness, "5");
+
+    replace_text(&mut harness, "42");
+    wheel(&mut harness, -1.0);
+    assert_eq!(*harness.state(), 41);
+}
+
+#[test]
+fn invalid_text_then_arrow_steps_value() {
+    let mut harness = int_harness(5, |w| w);
+    focus(&mut harness, "5");
+
+    replace_text(&mut harness, "abc");
+    press(&mut harness, Key::ArrowUp);
+    assert_eq!(*harness.state(), 6);
+    input(&harness, "6");
+}
+
+#[test]
+fn escape_discards_typed_text() {
+    let mut harness = int_harness(5, |w| w);
+    focus(&mut harness, "5");
+
+    replace_text(&mut harness, "42");
+    press(&mut harness, Key::Escape);
+    assert_eq!(*harness.state(), 5);
+    assert!(!input(&harness, "5").is_focused());
+}
+
+#[test]
+fn without_always_update_escape_discards_step() {
+    let mut harness = int_harness(5, |w| w.always_update(false));
+    focus(&mut harness, "5");
+
+    press(&mut harness, Key::ArrowUp);
+    press(&mut harness, Key::Escape);
+    assert_eq!(*harness.state(), 5);
+    input(&harness, "5");
+}
+
+// External changes while focused ---------------------------------------------
+#[test]
+fn external_change_while_focused_is_stepped() {
+    let mut harness = int_harness(5, |w| w);
+    focus(&mut harness, "5");
+
+    *harness.state_mut() = 20;
+    harness.run();
+    assert!(input(&harness, "20").is_focused());
+
+    press(&mut harness, Key::ArrowUp);
+    assert_eq!(*harness.state(), 21);
+}
+
+#[test]
+fn external_change_while_focused_is_kept_on_enter() {
+    let mut harness = int_harness(5, |w| w);
+    focus(&mut harness, "5");
+
+    *harness.state_mut() = 20;
+    harness.run();
+    press(&mut harness, Key::Enter);
+    assert_eq!(*harness.state(), 20);
+}
+
+#[test]
+fn without_always_update_external_change_replaces_step() {
+    let mut harness = int_harness(5, |w| w.always_update(false));
+    focus(&mut harness, "5");
+
+    press(&mut harness, Key::ArrowUp);
+    *harness.state_mut() = 20;
+    harness.run();
+    press(&mut harness, Key::Enter);
+    assert_eq!(*harness.state(), 20);
+}
+
+#[test]
+fn external_change_keeps_typed_text() {
+    let mut harness = int_harness(5, |w| w);
+    focus(&mut harness, "5");
+
+    replace_text(&mut harness, "42");
+    *harness.state_mut() = 20;
+    harness.run();
+    input(&harness, "42");
+
+    press(&mut harness, Key::Enter);
+    assert_eq!(*harness.state(), 42);
+}
+
+// Focus transfer ---------------------------------------------------------------
+fn two_boxes(build: fn(WheelBox<'_, i32>) -> WheelBox<'_, i32>) -> Harness<'static, (i32, i32)> {
+    let mut harness = Harness::new_ui_state(
+        move |ui, (first, second): &mut (i32, i32)| {
+            ui.add(build(WheelBox::new(first)));
+            ui.add(build(WheelBox::new(second)));
+        },
+        (5, 10),
+    );
+    harness.run();
+    harness
+}
+
+#[test]
+fn focus_moving_down_commits_typed_text() {
+    let mut harness = two_boxes(|w| w);
+    focus(&mut harness, "5");
+    replace_text(&mut harness, "42");
+
+    focus(&mut harness, "10");
+    assert_eq!(*harness.state(), (42, 10));
+}
+
+#[test]
+fn focus_moving_up_commits_typed_text() {
+    let mut harness = two_boxes(|w| w);
+    focus(&mut harness, "10");
+    replace_text(&mut harness, "42");
+
+    focus(&mut harness, "5");
+    assert_eq!(*harness.state(), (5, 42));
+}
+
+#[test]
+fn without_always_update_focus_moving_down_commits_step() {
+    let mut harness = two_boxes(|w| w.always_update(false));
+    focus(&mut harness, "5");
+    press(&mut harness, Key::ArrowUp);
+
+    focus(&mut harness, "10");
+    assert_eq!(*harness.state(), (6, 10));
+}
+
+#[test]
+fn without_always_update_focus_moving_up_commits_step() {
+    let mut harness = two_boxes(|w| w.always_update(false));
+    focus(&mut harness, "10");
+    press(&mut harness, Key::ArrowUp);
+
+    focus(&mut harness, "5");
+    assert_eq!(*harness.state(), (5, 11));
+}
+
+#[test]
+fn hiding_while_editing_discards_typed_text() {
+    let mut harness = Harness::new_ui_state(
+        |ui, (value, visible): &mut (i32, bool)| {
+            if *visible {
+                ui.add(WheelBox::new(value));
+            }
+        },
+        (5, true),
+    );
+    harness.run();
+    focus(&mut harness, "5");
+    replace_text(&mut harness, "42");
+
+    harness.state_mut().1 = false;
+    harness.run();
+    harness.state_mut().1 = true;
+    harness.run();
+    assert_eq!(*harness.state(), (5, true));
+    input(&harness, "5");
+}
+
+// Response::changed ------------------------------------------------------------
+/// Counts the frames in which the response reported `changed()`.
+fn changed_harness(value: i32) -> Harness<'static, (i32, usize)> {
+    let mut harness = Harness::new_ui_state(
+        |ui, (value, changed): &mut (i32, usize)| {
+            if ui.add(WheelBox::new(value).range([0, 10])).changed() {
+                *changed += 1;
+            }
+        },
+        (value, 0),
+    );
+    harness.run();
+    harness
+}
+
+#[test]
+fn changed_is_not_reported_while_typing() {
+    let mut harness = changed_harness(5);
+    focus(&mut harness, "5");
+
+    replace_text(&mut harness, "7");
+    assert_eq!(*harness.state(), (5, 0));
+
+    press(&mut harness, Key::Enter);
+    assert_eq!(*harness.state(), (7, 1));
+}
+
+#[test]
+fn changed_is_not_reported_without_a_change() {
+    let mut harness = changed_harness(10);
+    focus(&mut harness, "10");
+
+    // at the range limit
+    press(&mut harness, Key::ArrowUp);
+    // untouched text
+    press(&mut harness, Key::Enter);
+    assert_eq!(*harness.state(), (10, 0));
+}
+
 // Prefix / suffix and layout -------------------------------------------------
 #[test]
 fn accesskit_value_excludes_prefix() {
@@ -355,6 +574,44 @@ fn float_rejects_nan() {
     replace_text(&mut harness, "nan");
     press(&mut harness, Key::Enter);
     assert_eq!(*harness.state(), 1.0);
+}
+
+#[test]
+fn float_enter_keeps_full_precision() {
+    let mut harness = float_harness(1.23456, |w| w);
+    focus(&mut harness, "1.23");
+
+    press(&mut harness, Key::Enter);
+    assert_eq!(*harness.state(), 1.23456);
+}
+
+#[test]
+fn float_step_below_decimals_is_kept_on_enter() {
+    let mut harness = float_harness(1.0, |w| w.default_single_step(0.001));
+    focus(&mut harness, "1.00");
+
+    press(&mut harness, Key::ArrowUp);
+    assert_eq!(*harness.state(), 1.001);
+
+    press(&mut harness, Key::Enter);
+    assert_eq!(*harness.state(), 1.001);
+}
+
+#[test]
+fn float_focus_loss_keeps_full_precision() {
+    let mut harness = Harness::new_ui_state(
+        |ui, (first, second): &mut (f64, f64)| {
+            ui.add(WheelBox::new(first).decimals(2));
+            ui.add(WheelBox::new(second).decimals(2));
+        },
+        (1.23456, 2.0),
+    );
+    harness.run();
+
+    focus(&mut harness, "2.00");
+    focus(&mut harness, "1.23");
+    focus(&mut harness, "2.00");
+    assert_eq!(*harness.state(), (1.23456, 2.0));
 }
 
 #[test]
