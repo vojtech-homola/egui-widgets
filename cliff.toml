@@ -1,0 +1,46 @@
+# Configuration for https://git-cliff.org.
+[changelog]
+header = """
+# Changelog
+
+Changes are generated from Conventional Commits with git-cliff.
+"""
+body = """
+{% if version %}
+## [{{ version }}](https://github.com/vojtech-homola/egui-widgets/releases/tag/{{ version }}) - {{ timestamp | date(format="%Y-%m-%d") }}
+{% else %}
+## Unreleased
+{% endif %}
+{% for group, commits in commits | group_by(attribute="group") %}
+### {{ group | striptags | trim }}
+{% for commit in commits -%}
+- {% if commit.scope %}**{{ commit.scope }}:** {% endif %}{{ commit.message | upper_first }} ([{{ commit.id | truncate(length=7, end="") }}](https://github.com/vojtech-homola/egui-widgets/commit/{{ commit.id }}))
+{%- if commit.breaking_description %}
+  {{ commit.breaking_description | replace(from="\n", to="\n  ") }}
+{%- endif %}
+{% endfor %}
+{% endfor %}
+"""
+trim = true
+render_always = true
+format = true
+
+[git]
+conventional_commits = true
+filter_unconventional = true
+split_commits = false
+protect_breaking_commits = true
+commit_parsers = [
+    # Match breaking changes before maintenance exclusions, including chore!.
+    { field = "breaking", pattern = "^true$", group = "<!-- 0 -->Breaking Changes" },
+    { message = "^feat", group = "<!-- 1 -->Features" },
+    { message = "^fix", group = "<!-- 2 -->Fixes" },
+    { message = "^perf", group = "<!-- 3 -->Performance" },
+    { message = "^docs", group = "<!-- 4 -->Documentation" },
+    { message = "^refactor|^revert", group = "<!-- 5 -->Changes" },
+    { message = "^chore|^ci|^build|^test|^style", skip = true },
+    { message = ".*", group = "<!-- 6 -->Other" },
+]
+# Release boundaries use tags such as 0.1.0 or 0.2.0-rc.1.
+tag_pattern = '^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$'
+sort_commits = "newest"

@@ -67,3 +67,43 @@ cargo test
 CI runs Clippy and the tests on Linux, Windows and macOS, and checks formatting, the docs,
 the minimum supported Rust version (1.95) and a WebAssembly build of the demo, see
 [`.github/workflows/ci.yml`](.github/workflows/ci.yml).
+
+## Changelog and releases
+
+[`CHANGELOG.md`](CHANGELOG.md) is generated from committed Git history with
+[git-cliff](https://git-cliff.org/), configured in [`cliff.toml`](cliff.toml).
+
+Use [Conventional Commits](https://www.conventionalcommits.org/), for example
+`feat(wheel-box): add a new option`, `fix(wheel-box): handle empty input`, or
+`feat!: change the public API`. Breaking changes can also be marked with a
+`BREAKING CHANGE:` footer describing how callers should migrate. When squash-merging
+a PR, use its Conventional Commit title as the resulting commit message.
+
+Features, fixes, performance improvements, documentation, refactors and reverts are
+included. Routine `chore`, `ci`, `build`, `test` and `style` commits are omitted,
+unless they introduce a breaking change. Non-conventional commits are omitted.
+
+To refresh the changelog, including the Unreleased section:
+
+```sh
+git-cliff --output CHANGELOG.md
+```
+
+The entire file is regenerated, so make formatting changes in `cliff.toml`.
+Release sections are determined by tags such as `0.1.0`; without release tags,
+all entries appear under Unreleased.
+
+To prepare a release:
+
+1. Commit the code changes, update the library version in `Cargo.toml`, and refresh
+   `Cargo.lock` with `cargo check -p egui_widgets`.
+2. Run `git-cliff --tag 0.1.0 --output CHANGELOG.md`, replacing `0.1.0` with the
+   version being released. This labels the pending release without creating a tag.
+3. Review and commit `Cargo.toml`, `Cargo.lock` and `CHANGELOG.md` with a message
+   such as `chore(release): prepare 0.1.0`.
+4. Tag that commit with `git tag -a 0.1.0 -m "Release 0.1.0"`, then push the
+   commit and tag. Version bumps and crate publishing are handled manually.
+
+For a preview on GitHub, run **Actions → Changelog preview → Run workflow** and
+download the `changelog-preview` artifact. The workflow generates a changelog for
+the selected branch or tag without committing changes or publishing a release.
