@@ -1,9 +1,8 @@
 # Configuration for https://git-cliff.org.
 [changelog]
+output = "CHANGELOG.md"
 header = """
 # Changelog
-
-Changes are generated from Conventional Commits with git-cliff.
 """
 body = """
 {% if version %}
