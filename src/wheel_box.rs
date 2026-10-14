@@ -2,15 +2,11 @@ use std::fmt::Display;
 use std::str::FromStr;
 
 use egui::{
-    Align2, AsIdSalt, Atom, AtomExt as _, AtomLayout, Atoms, Color32, CursorIcon, Event,
-    FontSelection, Frame, Id, IdSalt, InputOptions, IntoAtoms, Key, Margin, Modifiers,
+    Align, Align2, AsIdSalt, Atom, AtomExt as _, AtomLayout, Atoms, Color32, CursorIcon, Event,
+    FontId, FontSelection, Frame, Id, IdSalt, InputOptions, IntoAtoms, Key, Margin, Modifiers,
     MouseWheelUnit, Response, RichText, Sense, TextWrapMode, Ui, Vec2, Widget, WidgetInfo,
     response::Flags, text, text_edit, vec2,
 };
-
-/// Inner margin shared by the focused [`text_edit::TextEdit`] and the unfocused layout,
-/// so the widget keeps its size and the text doesn't move when it gains focus.
-const MARGIN: Margin = Margin::symmetric(4, 3);
 
 /// Wheel movement in points that makes one step, about one notch of a mouse wheel.
 /// Touchpads report many small movements, which add up to steps at a steady pace.
@@ -99,6 +95,8 @@ struct WheelBoxState<T> {
     /// The value being edited. Ahead of `value` after stepping with
     /// [`WheelBox::always_update`] off.
     state_value: T,
+    /// The text of the focused box. Set from `state_value` on each focused frame unless
+    /// `edited`, so it may be stale while unfocused.
     string: String,
     /// `string` was typed into since it was last set from `state_value`.
     edited: bool,
@@ -110,11 +108,11 @@ struct WheelBoxState<T> {
 }
 
 impl<T: WheelBoxValue> WheelBoxState<T> {
-    fn new(value: T, single_step: T, decimals: u32) -> Self {
+    fn new(value: T, single_step: T) -> Self {
         Self {
             value,
             state_value: value,
-            string: value.format(decimals),
+            string: String::new(),
             edited: false,
             edit_pass: None,
             single_step,
@@ -137,12 +135,9 @@ impl<T: WheelBoxValue> WheelBoxState<T> {
 
     /// Follow a change of the bound value from outside. It replaces the value being
     /// edited, but not the text being typed.
-    fn sync(&mut self, value: T, decimals: u32) {
+    fn sync(&mut self, value: T) {
         self.value = value;
         self.state_value = value;
-        if !self.edited {
-            self.string = value.format(decimals);
-        }
     }
 
     /// The number to step from: the typed one if there is a valid one, otherwise the
@@ -312,6 +307,11 @@ fn accumulate_wheel(accumulated: &mut f32, steps: f32) -> i32 {
 /// The value is kept at full precision, [`WheelBox::decimals`] only limits what is
 /// shown. [`Response::changed`] is set only when the value changed.
 ///
+/// Like [`egui::DragValue`], it follows the [`egui::Style`] of the [`Ui`]: the size comes
+/// from `spacing.button_padding` and `spacing.interact_size`, the font from
+/// `drag_value_text_style`, and the colors from `visuals.widgets` (and the text field
+/// colors while editing).
+///
 /// ```
 /// # egui::__run_test_ui(|ui| {
 /// # use egui_widgets::WheelBox;
@@ -445,24 +445,27 @@ impl<T: WheelBoxValue> Widget for WheelBox<'_, T> {
         // Not clamped to the available width: in a `Grid` that would pin the column
         // to its initial width. The `TextEdit` is forced to the same width via `min_size`.
         let width = self.desired_width.unwrap_or_else(|| ui.available_width());
+        let geometry = Geometry::new(ui, width);
         let decimals = self.decimals.unwrap_or(T::DEFAULT_DECIMALS);
         let default_single_step = self.default_single_step.unwrap_or_else(T::one);
 
         let has_focus = ui.is_enabled() && ui.memory(|m| m.has_focus(id));
-        let mut state = ui
-            .data(|d| d.get_temp(id))
-            .unwrap_or_else(|| WheelBoxState::new(*self.value, default_single_step, decimals));
+        let mut state = ui.data(|d| d.get_temp::<WheelBoxState<T>>(id));
 
         // Changed from outside, e.g. by the application or another widget showing
         // the same value.
-        if !same(state.value, *self.value) {
-            state.sync(*self.value, decimals);
+        if let Some(state) = &mut state
+            && !same(state.value, *self.value)
+        {
+            state.sync(*self.value);
         }
 
         if has_focus {
-            self.ui_focused(ui, id, width, decimals, state)
+            let state =
+                state.unwrap_or_else(|| WheelBoxState::new(*self.value, default_single_step));
+            self.ui_focused(ui, id, &geometry, decimals, state)
         } else {
-            self.ui_unfocused(ui, id, width, decimals, state)
+            self.ui_unfocused(ui, id, &geometry, decimals, state)
         }
     }
 }
@@ -472,7 +475,7 @@ impl<T: WheelBoxValue> WheelBox<'_, T> {
         self,
         ui: &mut Ui,
         id: Id,
-        width: f32,
+        geometry: &Geometry,
         decimals: u32,
         mut state: WheelBoxState<T>,
     ) -> Response {
@@ -490,9 +493,10 @@ impl<T: WheelBoxValue> WheelBox<'_, T> {
         let default_single_step = default_single_step.unwrap_or_else(T::one);
         let pass = ui.ctx().cumulative_pass_nr();
 
-        // Follow a change of `decimals`, unless the text was typed into.
+        // Follow a change of the value or of `decimals`, unless the text was typed into.
+        let value_text = state.state_value.format(decimals);
         if !state.edited {
-            state.string = state.state_value.format(decimals);
+            state.string.clone_from(&value_text);
         }
 
         // Just focused, by a click, Tab or a focus request.
@@ -505,18 +509,14 @@ impl<T: WheelBoxValue> WheelBox<'_, T> {
 
         // Fit to the value, not to the text being typed, so the prefix and suffix
         // don't come and go while typing.
-        let affixes = fit_affixes(
-            ui,
-            width,
-            prefix,
-            &state.state_value.format(decimals),
-            suffix,
-        );
+        let affixes = fit_affixes(ui, geometry, prefix, &value_text, text_color, suffix);
         let mut response = text_edit::TextEdit::singleline(&mut state.string)
-            .desired_width(width)
-            .min_size(vec2(width, 0.))
+            .font(geometry.font_id.clone())
+            .desired_width(geometry.size.x)
+            .min_size(geometry.size)
+            .vertical_align(Align::Center)
             .clip_text(true)
-            .margin(MARGIN)
+            .margin(geometry.margin)
             .prefix(affixes.prefix)
             .suffix(affixes.suffix)
             .text_color_opt(text_color)
@@ -583,9 +583,9 @@ impl<T: WheelBoxValue> WheelBox<'_, T> {
         self,
         ui: &mut Ui,
         id: Id,
-        width: f32,
+        geometry: &Geometry,
         decimals: u32,
-        mut state: WheelBoxState<T>,
+        state: Option<WheelBoxState<T>>,
     ) -> Response {
         let Self {
             range,
@@ -595,50 +595,84 @@ impl<T: WheelBoxValue> WheelBox<'_, T> {
             value,
             ..
         } = self;
-        let mut save_state = false;
         let mut changed = false;
 
-        // The focus was taken before the text field could report losing it, e.g. by
-        // a widget shown above this one. Commit as on Enter, unless it was Escape,
-        // or the widget was hidden since it was focused.
-        if let Some(pass) = state.edit_pass {
-            let cancel = ui.input(|i| i.key_pressed(Key::Escape))
-                || ui.ctx().cumulative_pass_nr() > pass + 1;
-            if cancel {
-                state.edit_pass = None;
-            } else {
-                changed = state.commit(value, range, decimals);
+        // A box that was never focused has no state and just shows the value.
+        if let Some(mut state) = state {
+            let mut save_state = false;
+
+            // The focus was taken before the text field could report losing it, e.g. by
+            // a widget shown above this one. Commit as on Enter, unless it was Escape,
+            // or the widget was hidden since it was focused.
+            if let Some(pass) = state.edit_pass {
+                let cancel = ui.input(|i| i.key_pressed(Key::Escape))
+                    || ui.ctx().cumulative_pass_nr() > pass + 1;
+                if cancel {
+                    state.edit_pass = None;
+                } else {
+                    changed = state.commit(value, range, decimals);
+                }
+                text_edit::TextEditState::default().store(ui.ctx(), id);
+                save_state = true;
             }
-            text_edit::TextEditState::default().store(ui.ctx(), id);
-            save_state = true;
+
+            // Drop edits that were not committed.
+            if !same(state.state_value, *value) || state.edited {
+                state.reset(*value, decimals);
+                save_state = true;
+            }
+
+            if save_state {
+                ui.data_mut(|d| d.insert_temp(id, state));
+            }
         }
 
-        // Drop edits that were not committed.
         let text = value.format(decimals);
-        if !same(state.state_value, *value) || state.string != text || state.edited {
-            state.reset(*value, decimals);
-            save_state = true;
-        }
-
         // The same color as the focused `TextEdit`, so the text doesn't change on focus.
         let text_color = text_color
             .or(ui.visuals().override_text_color)
             .unwrap_or_else(|| ui.visuals().widgets.inactive.text_color());
-        let affixes = fit_affixes(ui, width, prefix, &text, suffix);
-        let mut response = show_unfocused(ui, id, width, affixes, &text, text_color);
+        let affixes = fit_affixes(ui, geometry, prefix, &text, Some(text_color), suffix);
+        let mut response = show_unfocused(ui, id, geometry, affixes, &text, text_color);
         if changed {
             response.mark_changed();
         }
-
-        if save_state {
-            ui.data_mut(|d| d.insert_temp(id, state));
-        }
-
         response
     }
 }
 
 // Helpers -------------------------------------------------------------------
+/// Font, inner margin and size shared by the focused [`text_edit::TextEdit`] and the
+/// unfocused layout, so the widget keeps its size and the text doesn't move when it gains
+/// focus. Taken from the style like in [`egui::DragValue`], so the box lines up with
+/// buttons and other widgets in a row.
+struct Geometry {
+    font_id: FontId,
+    margin: Margin,
+    size: Vec2,
+}
+
+impl Geometry {
+    fn new(ui: &Ui, width: f32) -> Self {
+        let style = ui.style();
+        let font_id = FontSelection::Style(style.drag_value_text_style.clone()).resolve(style);
+        let margin = Margin::from(style.spacing.button_padding);
+        let row_height = ui.fonts_mut(|f| f.row_height(&font_id));
+        let height = (row_height + style.spacing.extra_text_line_spacing + margin.sum().y)
+            .max(style.spacing.interact_size.y);
+        Self {
+            font_id,
+            margin,
+            size: vec2(width, height),
+        }
+    }
+
+    /// Width left for the prefix, value and suffix.
+    fn inner_width(&self) -> f32 {
+        self.size.x - self.margin.sum().x
+    }
+}
+
 /// Select all text of the focused text field with `id`, so typing replaces it.
 fn select_all(ui: &Ui, id: Id, text: &str) {
     let mut state = text_edit::TextEditState::load(ui.ctx(), id).unwrap_or_default();
@@ -653,34 +687,60 @@ fn select_all(ui: &Ui, id: Id, text: &str) {
 struct Affixes {
     prefix: Atoms<'static>,
     suffix: Atoms<'static>,
+    /// The value was measured and fits next to them, so it isn't truncated.
+    value_fits: bool,
 }
 
-/// Hide the suffix, then the prefix, if they don't fit next to the value in `width`,
+/// Hide the suffix, then the prefix, if they don't fit next to the value in the box,
 /// so the value is truncated only when it doesn't fit on its own.
 fn fit_affixes(
     ui: &Ui,
-    width: f32,
+    geometry: &Geometry,
     prefix: Atoms<'static>,
     value_text: &str,
+    text_color: Option<Color32>,
     suffix: Atoms<'static>,
 ) -> Affixes {
-    let available = width - MARGIN.sum().x;
-    let value_width = atom_width(ui, RichText::new(value_text).into());
-    let prefix_width = affix_width(ui, &prefix);
-    let suffix_width = affix_width(ui, &suffix);
+    // Nothing to hide, so skip laying out the value just to measure it.
+    if prefix.is_empty() && suffix.is_empty() {
+        return Affixes {
+            prefix,
+            suffix,
+            value_fits: false,
+        };
+    }
 
-    if prefix_width + value_width + suffix_width <= available {
-        Affixes { prefix, suffix }
-    } else if prefix_width + value_width <= available {
+    let available = geometry.inner_width();
+    let value = value_rich_text(geometry, value_text, text_color);
+    let width = affix_width(ui, &prefix) + atom_width(ui, value.into());
+    if width <= available {
+        // The suffix is measured only if it can be shown.
+        let suffix = if width + affix_width(ui, &suffix) <= available {
+            suffix
+        } else {
+            Atoms::default()
+        };
         Affixes {
             prefix,
-            suffix: Atoms::default(),
+            suffix,
+            value_fits: true,
         }
     } else {
         Affixes {
             prefix: Atoms::default(),
             suffix: Atoms::default(),
+            value_fits: false,
         }
+    }
+}
+
+/// The value as shown, in the font of the focused [`text_edit::TextEdit`]. Measured and
+/// shown with the same color, so both use the same cached galley.
+fn value_rich_text(geometry: &Geometry, value_text: &str, color: Option<Color32>) -> RichText {
+    let text = RichText::new(value_text).font(geometry.font_id.clone());
+    match color {
+        Some(color) => text.color(color),
+        None => text,
     }
 }
 
@@ -713,39 +773,44 @@ fn affix_width(ui: &Ui, atoms: &Atoms<'_>) -> f32 {
 fn show_unfocused(
     ui: &mut Ui,
     id: Id,
-    width: f32,
+    geometry: &Geometry,
     affixes: Affixes,
     value_text: &str,
     text_color: Color32,
 ) -> Response {
-    let Affixes { prefix, suffix } = affixes;
+    let Affixes {
+        prefix,
+        suffix,
+        value_fits,
+    } = affixes;
 
     // The value takes the free space (like the text in `TextEdit`), so the suffix sits at
     // the right edge in both states. It is truncated only if it doesn't fit on its own.
     let mut atoms = prefix;
     atoms.push_right(
-        RichText::new(value_text)
-            .color(text_color)
+        value_rich_text(geometry, value_text, Some(text_color))
             .atom_grow(true)
             .atom_shrink(true)
             .atom_align(Align2::LEFT_CENTER),
     );
     atoms.extend_right(suffix);
 
-    let font_id = FontSelection::default().resolve(ui.style());
-    let row_height = ui.fonts_mut(|f| f.row_height(&font_id));
-    let height = row_height + ui.spacing().extra_text_line_spacing + MARGIN.sum().y;
-
     // Click only, not drag: on touch screens a drag starting on the box should scroll an
     // enclosing `ScrollArea`, not focus the box.
     let mut allocated = AtomLayout::new(atoms)
         .id(id)
         .sense(Sense::click())
-        .frame(Frame::new().inner_margin(MARGIN))
-        .min_size(vec2(width, height))
-        .max_width(width)
+        .frame(Frame::new().inner_margin(geometry.margin))
+        .min_size(geometry.size)
+        .max_width(geometry.size.x)
         .align2(Align2::LEFT_CENTER)
-        .wrap_mode(TextWrapMode::Truncate)
+        // Unwrapped when it fits, as when it was measured, so the galley isn't laid out
+        // again.
+        .wrap_mode(if value_fits {
+            TextWrapMode::Extend
+        } else {
+            TextWrapMode::Truncate
+        })
         .allocate(ui);
 
     // Same frame adjustments as `TextEdit`, with the regular widget colors.
@@ -756,14 +821,21 @@ fn show_unfocused(
         .corner_radius(visuals.corner_radius)
         .stroke(visuals.bg_stroke)
         .inner_margin(
-            MARGIN + Margin::same((visuals.expansion - visuals.bg_stroke.width).round() as i8),
+            geometry.margin
+                + Margin::same((visuals.expansion - visuals.bg_stroke.width).round() as i8),
         )
         .outer_margin(Margin::same(-(visuals.expansion as i8)));
 
-    let response = allocated
+    let mut response = allocated
         .paint(ui)
         .response
         .on_hover_cursor(CursorIcon::Text);
+    if ui.style().explanation_tooltips {
+        response = response.on_hover_text(
+            "Click to edit. Step with the arrow keys or the mouse wheel, \
+             change the step with Q (halve), W (double) and R (reset).",
+        );
+    }
 
     if response.clicked() {
         response.request_focus();
@@ -908,12 +980,14 @@ mod tests {
         let mut harness = egui_kittest::Harness::new_ui(|ui| {
             let prefix = Atoms::new("x: ");
             let suffix = Atoms::new("nm");
+            let mut geometry = Geometry::new(ui, 0.);
             let inner = inner_width(
                 affix_width(ui, &prefix),
-                atom_width(ui, RichText::new(value).into()),
+                atom_width(ui, value_rich_text(&geometry, value, None).into()),
                 affix_width(ui, &suffix),
             );
-            let affixes = fit_affixes(ui, inner + MARGIN.sum().x, prefix, value, suffix);
+            geometry.size.x = inner + geometry.margin.sum().x;
+            let affixes = fit_affixes(ui, &geometry, prefix, value, None, suffix);
             result = Some((!affixes.prefix.is_empty(), !affixes.suffix.is_empty()));
         });
         harness.run();
