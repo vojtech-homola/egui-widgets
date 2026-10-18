@@ -1,8 +1,8 @@
 //! The interactive widget.
 
 use egui::{
-    AsIdSalt, CursorIcon, IdSalt, PointerButton, Pos2, Rect, Response, Sense, StrokeKind, Ui, Vec2,
-    WidgetInfo, WidgetType,
+    AsIdSalt, CursorIcon, Event, IdSalt, PointerButton, Pos2, Rect, Response, Sense, StrokeKind,
+    Ui, Vec2, WidgetInfo, WidgetType,
 };
 
 use super::{GraphBounds, GraphError, GraphMeshCache, GraphSeries, GraphStats, GraphViewport};
@@ -98,10 +98,15 @@ impl GraphState {
 
     /// Apply the pointer to the bounds. Returns whether they changed.
     fn interact(&mut self, ui: &Ui, response: &Response, rect: Rect) -> bool {
-        let (pos, origin, focused) =
-            ui.input(|i| (i.pointer.latest_pos(), i.pointer.press_origin(), i.focused));
+        let (pos, origin, focus_lost) = ui.input(|i| {
+            let focus_lost = i
+                .events
+                .iter()
+                .any(|e| matches!(e, Event::WindowFocused(false)));
+            (i.pointer.latest_pos(), i.pointer.press_origin(), focus_lost)
+        });
         if let Some(drag) = self.drag
-            && (!ui.is_enabled() || !focused || drag.rect != rect)
+            && (!ui.is_enabled() || focus_lost || drag.rect != rect)
         {
             self.drag = None;
         }

@@ -1,10 +1,12 @@
 mod app;
+mod graph_demo;
+mod wheel_box_demo;
 
 use app::DemoApp;
 
 #[cfg(not(target_arch = "wasm32"))]
 fn main() {
-    let viewport = eframe::egui::ViewportBuilder::default().with_inner_size([640., 640.]);
+    let viewport = eframe::egui::ViewportBuilder::default().with_inner_size([1100., 760.]);
 
     let native_options = eframe::NativeOptions {
         viewport,
