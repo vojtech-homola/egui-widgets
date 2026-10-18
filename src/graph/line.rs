@@ -103,6 +103,7 @@ pub(crate) fn select_line(
 
 /// [`select_line`] without the extrema tree and galloping search: scans every sample in
 /// view. A reference for tests and benchmarks.
+#[cfg(any(test, feature = "bench"))]
 pub(crate) fn select_line_scan(data: &Prepared, query: &LineQuery, out: &mut Vec<u32>) -> usize {
     out.clear();
     let mut work = Work::default();

@@ -18,6 +18,7 @@ mod points;
 mod tests;
 mod widget;
 
+#[cfg(feature = "bench")]
 #[doc(hidden)]
 pub mod bench;
 

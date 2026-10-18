@@ -1,4 +1,4 @@
-//! Internals exposed for benchmarks and tests. Not part of the public API.
+//! Internals for `benches/graph.rs`, behind the `bench` feature. Not part of the public API.
 
 use super::line::{self, LineQuery, Work};
 use super::points::{self, PointQuery};

@@ -88,7 +88,7 @@ trunk serve   # http://127.0.0.1:8190
 
 ```sh
 cargo test
-cargo bench --bench graph   # graph engine benchmarks, see benches/graph.rs
+cargo bench --features bench --bench graph   # graph engine benchmarks, see benches/
 ```
 
 - Unit tests for the pure value logic (parsing, stepping, clamping, wheel handling) are next

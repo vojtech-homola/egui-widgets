@@ -1,9 +1,12 @@
 # Graph benchmarks
 
 ```sh
-cargo bench --bench graph            # everything, ~10 minutes
-cargo bench --bench graph -- engine/ # one group
+cargo bench --features bench --bench graph            # everything, ~10 minutes
+cargo bench --features bench --bench graph -- engine/ # one group
 ```
+
+The `bench` feature exposes the internal selection functions the benchmarks compare, it is
+not meant for anything else.
 
 Data is uniform over X `[0, 1)`: `Noise` is white noise (every pixel column spans the full Y
 range, the worst case for lines and markers), `Sine` a sine with a little noise, `Gaps` a sine

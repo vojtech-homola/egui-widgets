@@ -7,12 +7,16 @@ description = "Reusable egui widgets"
 repository = "https://github.com/vojtech-homola/egui-widgets"
 license = "MIT"
 readme = "README.md"
-keywords = ["egui", "gui", "widget", "spinbox", "numeric"]
-categories = ["gui"]
+keywords = ["egui", "gui", "widget", "spinbox", "plot"]
+categories = ["gui", "visualization"]
 include = ["/src", "/tests", "/LICENSE", "/README.md"]
 
 [dependencies]
 egui = { version = "0.36", default-features = false }
+
+[features]
+# Internals used by `benches/graph.rs`, not a public API.
+bench = []
 
 [dev-dependencies]
 # Tests measure and select text, which needs real glyphs.
@@ -23,6 +27,7 @@ criterion = { version = "0.8", default-features = false, features = ["cargo_benc
 [[bench]]
 name = "graph"
 harness = false
+required-features = ["bench"]
 
 [workspace]
 members = [".", "example"]

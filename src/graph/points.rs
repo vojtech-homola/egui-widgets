@@ -231,6 +231,7 @@ impl Walk<'_> {
 
 /// [`select_points`] by checking every sample in view in order. A reference for tests and
 /// benchmarks.
+#[cfg(any(test, feature = "bench"))]
 pub(crate) fn select_points_scan(
     data: &Prepared,
     query: &PointQuery,
