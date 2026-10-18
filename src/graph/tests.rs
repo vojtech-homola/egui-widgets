@@ -716,3 +716,54 @@ fn single_sample_draws_no_line() {
     // Only the marker mesh.
     assert_eq!(cache.prepared().meshes().count(), 1);
 }
+
+#[test]
+fn failed_prepare_publishes_nothing() {
+    let data = sine(10_000, 0.0);
+    let series = [GraphSeries::new("a", &data)];
+    let vp = viewport([0.0, 10_000.0], [-1.5, 1.5]);
+    let mut cache = GraphMeshCache::default();
+    cache.prepare(&series, vp, options()).unwrap();
+    assert_eq!(cache.prepared().meshes().count(), 1);
+
+    let twice = [series[0], series[0]];
+    assert!(cache.prepare(&twice, vp, options()).is_err());
+    assert_eq!(cache.prepared().meshes().count(), 0);
+    assert_eq!(cache.prepared().stats(), GraphStats::default());
+
+    let invalid = GraphViewport {
+        pixels_per_point: 0.0,
+        ..vp
+    };
+    cache.prepare(&series, vp, options()).unwrap();
+    assert!(cache.prepare(&series, invalid, options()).is_err());
+    assert_eq!(cache.prepared().meshes().count(), 0);
+    assert_eq!(cache.prepared().stats(), GraphStats::default());
+
+    // The caches survived.
+    let stats = cache.prepare(&series, vp, options()).unwrap().stats();
+    assert_eq!(rebuilds(stats), [0, 0, 0]);
+    assert_eq!(cache.prepared().meshes().count(), 1);
+}
+
+#[test]
+fn segment_between_distant_samples_is_drawn() {
+    let data = GraphData::from_xy(vec![[0.0, -1e20], [1.0, 1e20]]).unwrap();
+    let series = [GraphSeries::new("a", &data)];
+    let mut cache = GraphMeshCache::default();
+    let stats = cache
+        .prepare(&series, viewport([0.0, 1.0], [-1.0, 1.0]), options())
+        .unwrap()
+        .stats();
+    assert_eq!(stats.line_samples, 2);
+    let mesh = cache.prepared().meshes().next().expect("a line mesh");
+    // The line crosses the whole plot (y 20..320).
+    let (top, bottom) = mesh
+        .vertices
+        .iter()
+        .fold((f32::MAX, f32::MIN), |(t, b), v| {
+            (t.min(v.pos.y), b.max(v.pos.y))
+        });
+    assert!(top <= 20.0 && bottom >= 320.0, "{top} {bottom}");
+    check_meshes(&cache);
+}

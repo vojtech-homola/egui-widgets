@@ -159,6 +159,10 @@ impl GraphMeshCache {
         viewport: GraphViewport,
         options: TessellationOptions,
     ) -> Result<PreparedGraph<'_>, GraphError> {
+        // Nothing is published until this call succeeds, the caches stay.
+        self.hidden = true;
+        self.stats = GraphStats::default();
+
         self.ids.clear();
         self.ids.extend(series.iter().map(|s| s.id.value()));
         self.ids.sort_unstable();
@@ -171,9 +175,7 @@ impl GraphMeshCache {
         if !(rect.is_finite() && ppp.is_finite() && ppp > 0.0) {
             return Err(GraphError::InvalidViewport);
         }
-        self.stats = GraphStats::default();
-        self.hidden = !rect.is_positive();
-        if self.hidden {
+        if !rect.is_positive() {
             return Ok(PreparedGraph {
                 entries: &[],
                 stats: self.stats,
@@ -197,6 +199,7 @@ impl GraphMeshCache {
         }
         self.entries.truncate(series.len());
 
+        self.hidden = false;
         let feathering_px = if options.feathering {
             options.feathering_size_in_pixels
         } else {
@@ -419,13 +422,19 @@ impl Projection {
 
 /// Clip the segment `a → b` to `[min, max]` (Liang–Barsky). Unclipped ends are returned
 /// unchanged.
+///
+/// A clipped end lies exactly on the boundary it was clipped to, and its other coordinate is
+/// interpolated from the nearer end. Interpolating `a + t * d` alone loses the result when
+/// the ends are far away: both clip parameters can round to the same value.
 fn clip(a: [f64; 2], b: [f64; 2], min: [f64; 2], max: [f64; 2]) -> Option<[[f64; 2]; 2]> {
     let d = [b[0] - a[0], b[1] - a[1]];
+    // Parameter of each end, and the boundary (axis, value) it was clipped to.
     let (mut t0, mut t1) = (0.0_f64, 1.0_f64);
+    let (mut at0, mut at1) = (None, None);
     for axis in 0..2 {
-        for (p, q) in [
-            (-d[axis], a[axis] - min[axis]),
-            (d[axis], max[axis] - a[axis]),
+        for (p, q, edge) in [
+            (-d[axis], a[axis] - min[axis], min[axis]),
+            (d[axis], max[axis] - a[axis], max[axis]),
         ] {
             if p == 0.0 {
                 if q < 0.0 {
@@ -434,9 +443,13 @@ fn clip(a: [f64; 2], b: [f64; 2], min: [f64; 2], max: [f64; 2]) -> Option<[[f64;
             } else {
                 let t = q / p;
                 if p < 0.0 {
-                    t0 = t0.max(t);
-                } else {
-                    t1 = t1.min(t);
+                    if t > t0 {
+                        t0 = t;
+                        at0 = Some((axis, edge));
+                    }
+                } else if t < t1 {
+                    t1 = t;
+                    at1 = Some((axis, edge));
                 }
             }
         }
@@ -444,9 +457,24 @@ fn clip(a: [f64; 2], b: [f64; 2], min: [f64; 2], max: [f64; 2]) -> Option<[[f64;
     if t0 > t1 {
         return None;
     }
-    let at = |t: f64| [a[0] + t * d[0], a[1] + t * d[1]];
-    let start = if t0 > 0.0 { at(t0) } else { a };
-    let end = if t1 < 1.0 { at(t1) } else { b };
+    let point = |t: f64, boundary: Option<(usize, f64)>, end: [f64; 2]| {
+        let Some((axis, edge)) = boundary else {
+            return end;
+        };
+        let other = 1 - axis;
+        // Interpolate along the clipped axis from the nearer end of the segment.
+        let (from, distance) = if t <= 0.5 {
+            (a, edge - a[axis])
+        } else {
+            (b, edge - b[axis])
+        };
+        let mut p = [0.0; 2];
+        p[axis] = edge;
+        p[other] = from[other] + distance * (d[other] / d[axis]);
+        p
+    };
+    let start = point(t0, at0, a);
+    let end = point(t1, at1, b);
     (start.iter().chain(&end).all(|v| v.is_finite())).then_some([start, end])
 }
 
@@ -596,5 +624,23 @@ mod tests {
         assert!(clip([-10.0, -5.0], [20.0, -5.0], [0.0, 0.0], [10.0, 10.0]).is_none());
         // Diagonal passing outside the corner.
         assert!(clip([-1.0, 0.5], [0.5, -1.0], [0.0, 0.0], [10.0, 10.0]).is_none());
+    }
+
+    #[test]
+    fn clip_distant_endpoints() {
+        // Both ends so far away that the clip parameters round to the same value.
+        let [start, end] = clip(
+            [0.0, 1.5e22],
+            [400.0, -1.5e22],
+            [-2.0, -2.0],
+            [402.0, 302.0],
+        )
+        .unwrap();
+        assert_eq!(start[1], 302.0);
+        assert_eq!(end[1], -2.0);
+        assert!((start[0] - 200.0).abs() < 1e-6 && (end[0] - 200.0).abs() < 1e-6);
+
+        let [start, end] = clip([-1e22, 5.0], [1e22, 6.0], [-2.0, -2.0], [402.0, 302.0]).unwrap();
+        assert_eq!([start[0], end[0]], [-2.0, 402.0]);
     }
 }
