@@ -18,6 +18,11 @@ egui = { version = "0.36", default-features = false }
 # Tests measure and select text, which needs real glyphs.
 egui = { version = "0.36", default-features = false, features = ["default_fonts"] }
 egui_kittest = "0.36"
+criterion = { version = "0.8", default-features = false, features = ["cargo_bench_support"] }
+
+[[bench]]
+name = "graph"
+harness = false
 
 [workspace]
 members = [".", "example"]

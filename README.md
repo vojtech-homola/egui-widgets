@@ -35,6 +35,38 @@ Reusable widgets for [egui](https://github.com/emilk/egui).
   Like other egui widgets, the box gets its id from its position in the `Ui`. If widgets
   before it come and go while it's being edited, give it a stable id with `.id_salt(...)`.
 
+- `Graph` – 2D plot of lines, markers or both, for datasets with millions of samples per
+  series. Drag with the left mouse button to pan, with the right one to zoom around the
+  point where the drag started: horizontally for X, vertically for Y (as in PyQtGraph).
+
+  ```rust
+  // Once, or when the data changes (may run on another thread):
+  let data = GraphData::from_uniform(0.0, 1e-3, samples)?; // or GraphData::from_xy(points)?
+  // Kept in the application:
+  let mut state = GraphState::default(); // fits the view to the first data shown
+
+  // Every frame:
+  let series = [GraphSeries::new("signal", &data).mode(GraphMode::LinePoints)];
+  let response = Graph::new(&mut state).series(&series).show(ui);
+  ```
+
+  X values must be finite and nondecreasing (regular or irregular, duplicates allowed). A
+  NaN or infinite Y is a gap. Preparing a `GraphData` validates it and builds an extrema
+  index in one pass, after which drawing doesn't depend on the number of samples:
+
+  - Lines keep the first, smallest, largest and last sample of each physical pixel column
+    (M4), found in the index, so a line has at most about four samples per column and
+    narrow spikes never disappear. `LineReduction::Exact` draws every sample.
+  - Markers keep the earliest sample of each occupied screen cell (marker-sized by
+    default). Unlike lines, this may have to look at every visible sample for scattered
+    data. Translucent markers aren't reduced unless asked for with
+    `PointReduction::ScreenGrid`.
+  - Selections and meshes are cached per series and rebuilt only when something they depend
+    on changes, so a frame where nothing changed reads no samples and builds no geometry.
+
+  `GraphMeshCache` is the engine behind the widget, usable without a `Ui`. Axes, ticks,
+  labels and wheel zoom are not there yet.
+
 ## Example
 
 An interactive demo lives in [`example/`](example/).
@@ -56,6 +88,7 @@ trunk serve   # http://127.0.0.1:8190
 
 ```sh
 cargo test
+cargo bench --bench graph   # graph engine benchmarks, see benches/graph.rs
 ```
 
 - Unit tests for the pure value logic (parsing, stepping, clamping, wheel handling) are next
