@@ -35,6 +35,15 @@ Reusable widgets for [egui](https://github.com/emilk/egui).
   Like other egui widgets, the box gets its id from its position in the `Ui`. If widgets
   before it come and go while it's being edited, give it a stable id with `.id_salt(...)`.
 
+  For screen readers the box is named by the text of its prefix and suffix, like
+  `egui::DragValue`. Without them, name it with `.labelled_by(label.id)` on the response
+  of a visible label next to it, or with `.accessible_name("...")`:
+
+  ```rust
+  let label = ui.label("Exposure");
+  ui.add(WheelBox::new(&mut exposure).suffix("ms")).labelled_by(label.id);
+  ```
+
 ## Example
 
 An interactive demo lives in [`example/`](example/).

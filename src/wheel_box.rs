@@ -2,10 +2,10 @@ use std::fmt::Display;
 use std::str::FromStr;
 
 use egui::{
-    Align, Align2, AsIdSalt, Atom, AtomExt as _, AtomLayout, Atoms, Color32, CursorIcon, Event,
-    FontId, FontSelection, Frame, Id, IdSalt, InputOptions, IntoAtoms, Key, Margin, Modifiers,
-    MouseWheelUnit, Response, RichText, Sense, TextWrapMode, Ui, Vec2, Widget, WidgetInfo,
-    response::Flags, text, text_edit, vec2,
+    Align2, AsIdSalt, Atom, AtomExt as _, Atoms, Color32, CursorIcon, Event, FontId, FontSelection,
+    Frame, Id, IdSalt, InputOptions, IntoAtoms, Key, Margin, Modifiers, MouseWheelUnit, Response,
+    RichText, Sense, TextWrapMode, Ui, Vec2, Widget, WidgetAtom, WidgetInfo, response::Flags, text,
+    text_edit, vec2,
 };
 
 /// Wheel movement in points that makes one step, about one notch of a mouse wheel.
@@ -312,6 +312,9 @@ fn accumulate_wheel(accumulated: &mut f32, steps: f32) -> i32 {
 /// `drag_value_text_style`, and the colors from `visuals.widgets` (and the text field
 /// colors while editing).
 ///
+/// For screen readers the box is named by the text of its prefix and suffix. Without
+/// them, name it with [`Response::labelled_by`] or [`Response::accessible_name`].
+///
 /// ```
 /// # egui::__run_test_ui(|ui| {
 /// # use egui_widgets::WheelBox;
@@ -460,12 +463,20 @@ impl<T: WheelBoxValue> Widget for WheelBox<'_, T> {
             state.sync(*self.value);
         }
 
-        if has_focus {
+        // The prefix and suffix are the visible label of the value, so they name the
+        // widget, as in `egui::DragValue`. `Response::labelled_by` replaces this name.
+        let name = accessible_name(&self.prefix, &self.suffix);
+
+        let response = if has_focus {
             let state =
                 state.unwrap_or_else(|| WheelBoxState::new(*self.value, default_single_step));
             self.ui_focused(ui, id, &geometry, decimals, state)
         } else {
             self.ui_unfocused(ui, id, &geometry, decimals, state)
+        };
+        match name {
+            Some(name) => response.accessible_name(name),
+            None => response,
         }
     }
 }
@@ -514,7 +525,7 @@ impl<T: WheelBoxValue> WheelBox<'_, T> {
             .font(geometry.font_id.clone())
             .desired_width(geometry.size.x)
             .min_size(geometry.size)
-            .vertical_align(Align::Center)
+            .align(Align2::LEFT_CENTER)
             .clip_text(true)
             .margin(geometry.margin)
             .prefix(affixes.prefix)
@@ -673,6 +684,17 @@ impl Geometry {
     }
 }
 
+/// The text of the prefix and suffix, if any.
+fn accessible_name(prefix: &Atoms<'_>, suffix: &Atoms<'_>) -> Option<String> {
+    let parts: Vec<String> = [prefix.text(), suffix.text()]
+        .into_iter()
+        .flatten()
+        .map(|part| part.trim().to_owned())
+        .filter(|part| !part.is_empty())
+        .collect();
+    (!parts.is_empty()).then(|| parts.join(" "))
+}
+
 /// Select all text of the focused text field with `id`, so typing replaces it.
 fn select_all(ui: &Ui, id: Id, text: &str) {
     let mut state = text_edit::TextEditState::load(ui.ctx(), id).unwrap_or_default();
@@ -757,7 +779,7 @@ fn atom_width(ui: &Ui, atom: Atom<'_>) -> f32 {
 }
 
 /// Width taken by prefix or suffix atoms, including one gap per atom to its
-/// neighbour (see `AtomLayout::gap`).
+/// neighbour (see `WidgetAtom::gap`).
 fn affix_width(ui: &Ui, atoms: &Atoms<'_>) -> f32 {
     let gap = ui.spacing().icon_spacing;
     atoms
@@ -797,7 +819,7 @@ fn show_unfocused(
 
     // Click only, not drag: on touch screens a drag starting on the box should scroll an
     // enclosing `ScrollArea`, not focus the box.
-    let mut allocated = AtomLayout::new(atoms)
+    let mut allocated = WidgetAtom::new(atoms)
         .id(id)
         .sense(Sense::click())
         .frame(Frame::new().inner_margin(geometry.margin))
