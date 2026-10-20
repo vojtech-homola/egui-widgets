@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.0](https://github.com/vojtech-homola/egui-widgets/releases/tag/0.2.0) - 2026-10-20
+
+### Breaking Changes
+
+- Update to egui 0.37 (#1) ([5c0f95e](https://github.com/vojtech-homola/egui-widgets/commit/5c0f95eadf364b769bc2967da7194e3d25aadfc7))
+  update to egui 0.37 (#1)
+
 ## [0.1.0](https://github.com/vojtech-homola/egui-widgets/releases/tag/0.1.0) - 2026-10-14
 
 ### Features
