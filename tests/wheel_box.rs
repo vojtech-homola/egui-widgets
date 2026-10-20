@@ -1,5 +1,5 @@
 use egui::accesskit::Role;
-use egui::{Event, Key, Modifiers, MouseWheelUnit, TouchPhase, vec2};
+use egui::{Event, Key, Modifiers, MouseWheelSource, MouseWheelUnit, TouchPhase, vec2};
 use egui_kittest::kittest::{Queryable, by};
 use egui_kittest::{Harness, Node};
 use egui_widgets::WheelBox;
@@ -10,7 +10,7 @@ fn int_harness(
 ) -> Harness<'static, i32> {
     let mut harness = Harness::new_ui_state(
         move |ui, value: &mut i32| {
-            ui.add(build(WheelBox::new(value)));
+            ui.add(build(WheelBox::new(value))).accessible_name("value");
         },
         value,
     );
@@ -24,7 +24,8 @@ fn float_harness(
 ) -> Harness<'static, f64> {
     let mut harness = Harness::new_ui_state(
         move |ui, value: &mut f64| {
-            ui.add(build(WheelBox::new(value).decimals(2)));
+            ui.add(build(WheelBox::new(value).decimals(2)))
+                .accessible_name("value");
         },
         value,
     );
@@ -59,6 +60,7 @@ fn wheel_event(unit: MouseWheelUnit, delta: egui::Vec2, modifiers: Modifiers) ->
         unit,
         delta,
         phase: TouchPhase::Move,
+        source: MouseWheelSource::Unknown,
         modifiers,
     }
 }
@@ -159,7 +161,8 @@ fn step_keys_change_step() {
 fn external_single_step_is_updated() {
     let mut harness = Harness::new_ui_state(
         |ui, (value, step): &mut (i32, i32)| {
-            ui.add(WheelBox::new(value).single_step(step));
+            ui.add(WheelBox::new(value).single_step(step))
+                .accessible_name("value");
         },
         (0, 2),
     );
@@ -370,8 +373,9 @@ fn external_change_keeps_typed_text() {
 fn two_boxes(build: fn(WheelBox<'_, i32>) -> WheelBox<'_, i32>) -> Harness<'static, (i32, i32)> {
     let mut harness = Harness::new_ui_state(
         move |ui, (first, second): &mut (i32, i32)| {
-            ui.add(build(WheelBox::new(first)));
-            ui.add(build(WheelBox::new(second)));
+            ui.add(build(WheelBox::new(first))).accessible_name("first");
+            ui.add(build(WheelBox::new(second)))
+                .accessible_name("second");
         },
         (5, 10),
     );
@@ -424,7 +428,7 @@ fn hiding_while_editing_discards_typed_text() {
     let mut harness = Harness::new_ui_state(
         |ui, (value, visible): &mut (i32, bool)| {
             if *visible {
-                ui.add(WheelBox::new(value));
+                ui.add(WheelBox::new(value)).accessible_name("value");
             }
         },
         (5, true),
@@ -446,7 +450,11 @@ fn hiding_while_editing_discards_typed_text() {
 fn changed_harness(value: i32) -> Harness<'static, (i32, usize)> {
     let mut harness = Harness::new_ui_state(
         |ui, (value, changed): &mut (i32, usize)| {
-            if ui.add(WheelBox::new(value).range([0, 10])).changed() {
+            if ui
+                .add(WheelBox::new(value).range([0, 10]))
+                .accessible_name("value")
+                .changed()
+            {
                 *changed += 1;
             }
         },
@@ -485,6 +493,40 @@ fn changed_is_not_reported_without_a_change() {
 fn accesskit_value_excludes_prefix() {
     let harness = int_harness(5, |w| w.prefix("x: ").suffix("px"));
     input(&harness, "5");
+}
+
+#[test]
+fn prefix_and_suffix_name_the_box() {
+    let mut harness = Harness::new_ui_state(
+        |ui, value: &mut i32| {
+            ui.add(WheelBox::new(value).prefix("x: ").suffix("px"));
+        },
+        5,
+    );
+    harness.run();
+    harness.get(by().role(Role::TextInput).label("x: px"));
+
+    focus(&mut harness, "5");
+    harness.get(by().role(Role::TextInput).label("x: px"));
+}
+
+#[test]
+fn labelled_by_names_the_box() {
+    let mut harness = Harness::new_ui_state(
+        |ui, value: &mut i32| {
+            ui.horizontal(|ui| {
+                let label = ui.label("Exposure");
+                ui.add(WheelBox::new(value).suffix("ms"))
+                    .labelled_by(label.id);
+            });
+        },
+        5,
+    );
+    harness.run();
+    harness.get(by().role(Role::TextInput).label("Exposure"));
+
+    focus(&mut harness, "5");
+    harness.get(by().role(Role::TextInput).label("Exposure"));
 }
 
 #[test]
@@ -551,7 +593,7 @@ fn desired_width_is_respected_in_grid() {
 fn float_default_decimals() {
     let mut harness = Harness::new_ui_state(
         |ui, value: &mut f64| {
-            ui.add(WheelBox::new(value));
+            ui.add(WheelBox::new(value)).accessible_name("value");
         },
         1.0,
     );
@@ -631,8 +673,10 @@ fn float_step_below_decimals_is_kept_on_enter() {
 fn float_focus_loss_keeps_full_precision() {
     let mut harness = Harness::new_ui_state(
         |ui, (first, second): &mut (f64, f64)| {
-            ui.add(WheelBox::new(first).decimals(2));
-            ui.add(WheelBox::new(second).decimals(2));
+            ui.add(WheelBox::new(first).decimals(2))
+                .accessible_name("first");
+            ui.add(WheelBox::new(second).decimals(2))
+                .accessible_name("second");
         },
         (1.23456, 2.0),
     );
@@ -822,7 +866,8 @@ fn reversed_range_is_accepted() {
 fn deferred_step_is_clamped_to_current_range() {
     let mut harness = Harness::new_ui_state(
         |ui, (value, max): &mut (i32, i32)| {
-            ui.add(WheelBox::new(value).always_update(false).range([0, *max]));
+            ui.add(WheelBox::new(value).always_update(false).range([0, *max]))
+                .accessible_name("value");
         },
         (5, 10),
     );
@@ -857,7 +902,8 @@ fn id_salt_keeps_edit_when_widgets_appear_above() {
             if *show_button {
                 let _ = ui.button("new");
             }
-            ui.add(WheelBox::new(value).id_salt("value"));
+            ui.add(WheelBox::new(value).id_salt("value"))
+                .accessible_name("value");
         },
         (false, 5),
     );
@@ -877,7 +923,8 @@ fn id_salt_keeps_edit_when_widgets_appear_above() {
 fn disabled_box_is_not_editable() {
     let mut harness = Harness::new_ui_state(
         |ui, value: &mut i32| {
-            ui.add_enabled(false, WheelBox::new(value));
+            ui.add_enabled(false, WheelBox::new(value))
+                .accessible_name("value");
         },
         5,
     );
@@ -894,7 +941,8 @@ fn disabled_box_is_not_editable() {
 fn changing_decimals_refreshes_focused_text() {
     let mut harness = Harness::new_ui_state(
         |ui, (value, decimals): &mut (f64, u32)| {
-            ui.add(WheelBox::new(value).decimals(*decimals));
+            ui.add(WheelBox::new(value).decimals(*decimals))
+                .accessible_name("value");
         },
         (1.23456, 2),
     );
@@ -928,7 +976,8 @@ fn float_steps_do_not_drift() {
 fn f32_steps_and_typing() {
     let mut harness = Harness::new_ui_state(
         |ui, value: &mut f32| {
-            ui.add(WheelBox::new(value).decimals(1));
+            ui.add(WheelBox::new(value).decimals(1))
+                .accessible_name("value");
         },
         1.0,
     );

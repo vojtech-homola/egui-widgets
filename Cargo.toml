@@ -12,12 +12,12 @@ categories = ["gui"]
 include = ["/src", "/tests", "/LICENSE", "/README.md"]
 
 [dependencies]
-egui = { version = "0.36", default-features = false }
+egui = { version = "0.37", default-features = false }
 
 [dev-dependencies]
 # Tests measure and select text, which needs real glyphs.
-egui = { version = "0.36", default-features = false, features = ["default_fonts"] }
-egui_kittest = "0.36"
+egui = { version = "0.37", default-features = false, features = ["default_fonts"] }
+egui_kittest = "0.37"
 
 [workspace]
 members = [".", "example"]
